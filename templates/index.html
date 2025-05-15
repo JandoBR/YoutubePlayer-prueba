@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>🎵 Control de Música</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script defer src="/static/script.js"></script>
+</head>
+
+<body>
+    <h1>🎵 MENÚ DE CONTROL 🎵</h1>
+
+    <div id="song-info">
+        <p><strong>Canción actual:</strong> <span id="song-title">N/A</span></p>
+        <img id="thumbnail" src="" alt="Miniatura" width="150">
+    </div>
+
+    <div class="controls">
+        <button onclick="resume()">▶️ Reanudar</button>
+        <button onclick="pause()">⏸️ Pausar</button>
+        <button onclick="previousSong()">⏮️ Anterior</button>
+        <button onclick="nextSong()">⏭️ Siguiente</button>
+        <button onclick="changeVolume()">🔊 Cambiar volumen</button>
+        <button onclick="changeTime()">⏳ Cambiar tiempo</button>
+        <button onclick="shuffle()">🔀 Shuffle</button>
+        <button onclick="playByIndex()">🎲 Reproducir por índice</button>
+        <button onclick="shutdown()">🛑 Apagar servidor</button>
+    </div>
+
+    <div id="playlist-container">
+        <ul id="playlist">
+            <!-- Aquí van las canciones -->
+            <li onclick="playIndex(0)">🎵 Canción 1</li>
+            <li onclick="playIndex(1)">🎵 Canción 2</li>
+            <li onclick="playIndex(2)">🎵 Canción 3</li>
+            <!-- etc -->
+        </ul>
+    </div>
+
+
+
+    <p id="status"></p>
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+    <script>
+        const socket = io();
+
+        socket.on('song_changed', data => {
+            console.log("Canción actualizada:", data);
+            document.getElementById("song-title").textContent = data.title || "N/A";
+            document.getElementById("thumbnail").src = data.thumbnail || "";
+        });
+    </script>
+
+    <script>
+        async function loadPlaylist() {
+            const res = await fetch('/playlist');
+            const data = await res.json();
+            const playlist = data.playlist;
+            const current = data.current;
+
+            const container = document.getElementById('playlist-container');
+            container.innerHTML = '';
+
+            playlist.forEach((song, index) => {
+                const li = document.createElement('li');
+                li.textContent = song.title;
+                li.style.cursor = 'pointer';
+                li.style.padding = '5px';
+                li.style.borderBottom = '1px solid #ccc';
+
+                if (index === current) {
+                    li.style.fontWeight = 'bold';
+                    li.style.color = '#007BFF';
+                }
+
+                li.addEventListener('click', async () => {
+                    await fetch('/play_index_song', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ index: index })
+                    });
+                });
+
+                container.appendChild(li);
+            });
+        }
+
+        // Llama esta función al cargar la página y luego cada cierto tiempo para refrescar
+        loadPlaylist();
+        setInterval(loadPlaylist, 1000); // actualiza cada 3 segundos (puedes ajustar)
+    </script>
+
+</body>
+
+</html>

@@ -1,24 +1,29 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template
+from flask_socketio import SocketIO, emit
+import os
+import signal
 import threading
-from player import playlist, shuffle_playlist, pause_song, resume_song, next_song
+from player import playlist, shuffle_playlist, pause_song, resume_song, next_song, menu_cli
 from player import previous_song, mains, update_yt_dlp, retrieve_playlist, get_current_song, preload_song
 from player import play_index_song, play_random, set_time_song, set_volume, get_playlist, rearrange_playlist
-from flask_cors import CORS
 
 app = Flask(__name__)
-CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 preload_lock = threading.Lock()  # Lock to prevent multiple executions
 preload_thread = None
 
 
+@app.route('/')
+def home():
+    return render_template('index.html')
+
+
 @app.route('/shutdown', methods=['POST'])
 def shutdown():
     print("Shutting down...")
-    if preload_thread and preload_thread.is_alive():
-        preload_thread.join()  # Ensure the thread completes
-    # Other cleanup tasks can go here
-    exit(0)
+    os.kill(os.getpid(), signal.SIGINT)  # Simulate Ctrl+C to kill Flask
+    return "Server shutting down..."
 
 
 def preload_task():
@@ -49,7 +54,7 @@ def order_playlist():
 
 
 @app.route('/playlist', methods=['GET'])
-def get_playlist():
+def get_playlists():
     data = get_playlist()
     return jsonify({"playlist": data[0], "current": data[1]})
 
@@ -70,7 +75,7 @@ def change_volume():
 @app.route('/set_time_song', methods=['POST'])
 def set_time():
     data = request.json
-    set_time_song(data['time'])
+    set_time_song(data['time']*1000)
     return jsonify({"status": "Time set"})
 
 
@@ -87,6 +92,10 @@ def play_index():
 
     preload_thread = threading.Thread(target=preload_task)
     preload_thread.start()
+
+    info = get_current_song()
+    socketio.emit('song_changed', {
+                  "title": info[0], "thumbnail": info[1]})
 
     return jsonify({"status": "Playing song"})
 
@@ -145,6 +154,11 @@ def next_track():
     preload_thread = threading.Thread(target=preload_task)
     preload_thread.start()
     info = get_current_song()
+
+    # Emitir evento al cliente vía WebSocket con la info actualizada
+    socketio.emit('song_changed', {
+                  "title": info[0], "thumbnail": info[1]})
+
     return jsonify({"status": "playing next", "title": info[0], "thumbnail": info[1]})
 
 
@@ -157,6 +171,8 @@ def previous_track():
 
     previous_song()
     info = get_current_song()
+    socketio.emit('song_changed', {
+                  "title": info[0], "thumbnail": info[1]})
     return jsonify({"status": "playing previous", "title": info[0], "thumbnail": info[1]})
 
 
@@ -169,9 +185,8 @@ def start():
 
 
 if __name__ == "__main__":
-
-    update_yt_dlp()
+    # update_yt_dlp()
     retrieve_playlist()
     shuffle_playlist()
-
-    app.run(host="0.0.0.0", port=5000, threaded=True)
+    menu_cli()
+    socketio.run(app, host="0.0.0.0", port=5000)

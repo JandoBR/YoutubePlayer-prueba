@@ -1,16 +1,19 @@
 import subprocess
-import json
 import requests
+import webbrowser
 from time import sleep
 from pathlib import Path
 from random import shuffle, randint
+import yt_dlp
 import vlc
+
 
 player = None
 instance = None
 playlist = []
 Current = 0
 paused = False
+BASE_URL = "http://127.0.0.1:5000"
 
 
 def get_playlist():
@@ -47,22 +50,22 @@ def update_yt_dlp() -> int:
 
 def retrieve_playlist():
     global playlist
-    ydl_opts = [
-        "python", "-m", "yt_dlp",
-        "--flat-playlist",  # No descarga info extra, solo lo básico
-        "--print-json",
-        "https://youtube.com/playlist?list=PLRUpXxWIqQmha-fY8rLBobP7Kbc3DdTvF&si=YFG2WyRsclC49k6s"
-    ]
+    url = "https://youtube.com/playlist?list=PLRUpXxWIqQmha-fY8rLBobP7Kbc3DdTvF&si=fWU2UDGtXUPVtTmx"
 
-    result = subprocess.run(ydl_opts, capture_output=True, text=True)
+    ydl_opts = {
+        "quiet": True,  # Evita imprimir logs en la consola
+        "extract_flat": True,  # No descarga los videos, solo obtiene la info
+    }
 
-    if result.returncode == 0:
-        for line in result.stdout.strip().split("\n"):  # Procesa cada línea JSON
-            info = json.loads(line)
-            video_id = info.get("id")
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        result = ydl.extract_info(url, download=False)
+
+    if result and "entries" in result:
+        for entry in result["entries"]:
+            video_id = entry.get("id")
             playlist.append({
-                "title": info.get("title"),
-                "url": f"https://www.youtube.com/watch?v={info.get('id')}",
+                "title": entry.get("title"),
+                "url": f"https://www.youtube.com/watch?v={video_id}",
                 "vlcurl": None,
                 "thumbnail": get_thumbnail(video_id),
             })
@@ -73,25 +76,22 @@ def shuffle_playlist():
     paused = True
     shuffle(playlist)
     Current = -1
-    preload_song()
 
 
-def get_audio_url(video_url) -> "vlc.MediaPlayer":
-    ydl_opts = [
-        "python", "-m", "yt_dlp",
-        "--quiet", "--no-warnings",
-        "-f", "bestaudio[ext=webm]",
-        "--print-json", video_url
-    ]
+def get_audio_url(video_url) -> str:
+    ydl_opts = {
+        "quiet": True,  # Evita imprimir logs en consola
+        "no_warnings": True,  # Suprime advertencias
+        "format": "bestaudio[ext=webm]",  # Selecciona el mejor audio en WebM
+    }
 
-    result = subprocess.run(ydl_opts, capture_output=True, text=True)
-
-    if result.returncode == 0:
-        info = json.loads(result.stdout)
-        return info["url"]
-    else:
-        print("Error extracting URL:", result.stderr)
-        return None
+    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        try:
+            info = ydl.extract_info(video_url, download=False)
+            return info["url"]
+        except Exception as e:
+            print("Error extracting URL:", e)
+            return None
 
 
 def play_song(url, i=0):
@@ -148,7 +148,10 @@ def next_song():
     else:
         url = playlist[Current]['url']
         url = get_audio_url(url)
-        playlist[Current]['vlcurl'] = url
+        if url:
+            playlist[Current]['vlcurl'] = url
+        else:
+            return next_song()
     play_song(url)
     return 0
 
@@ -193,11 +196,29 @@ def preload_song():
     eliminar_archivos()
 
 
+# Variable auxiliar para almacenar temporalmente la última canción válida
+last_known_info = ("No song playing", "", -1, None, None)
+
+
 def get_current_song():
-    global Current, playlist
+    global Current, playlist, player, last_known_info
+
     if playlist and 0 <= Current < len(playlist):
-        return playlist[Current]["title"], playlist[Current]["thumbnail"], Current
-    return "No song playing"
+        title = playlist[Current]["title"]
+        thumbnail = playlist[Current]["thumbnail"]
+
+        if player:
+            current_time = player.get_time() // 1000
+            song_length = player.get_length() // 1000
+            last_known_info = (title, thumbnail, Current,
+                               current_time, song_length)
+            return last_known_info
+
+        last_known_info = (title, thumbnail, Current, None, None)
+        return last_known_info
+
+    # Si Current es -1 o la playlist está vacía, se devuelve la última canción conocida
+    return last_known_info
 
 
 def play_index_song(index):
@@ -205,6 +226,7 @@ def play_index_song(index):
     paused = True
     if index > len(playlist):
         return
+    old = Current
     Current = index - 1
     data = {"id": 0}
     requests.post(url="http://127.0.0.1:5000/next", json=data)
@@ -230,18 +252,23 @@ def set_volume(level):
 def get_thumbnail(video_id):
     return f"https://img.youtube.com/vi/{video_id}/hqdefault.jpg"
 
+# TODO
+
+
+def menu_cli():
+    # Esto abrirá http://localhost:5000 en el navegador predeterminado
+    webbrowser.open("http://localhost:5000")
+
 
 def mains():
     global Current, playlist, paused, instance, player
-    Current = 0
     instance = vlc.Instance()
     player = instance.media_player_new()
     data = {"id": 1}
     requests.post(url="http://127.0.0.1:5000/next", json=data)
     while True:
-        playing = player.is_playing()
-        if playing == 0 and not paused:
+        sleep(0.5)
+        if player.is_playing() == 0 and not paused:
             print("hice un request :D")
             requests.post(url="http://127.0.0.1:5000/next", json=data)
-            duration = 5
-            sleep(duration)
+            sleep(5)
