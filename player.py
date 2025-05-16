@@ -3,6 +3,7 @@ import requests
 import webbrowser
 from time import sleep
 from pathlib import Path
+import threading
 from random import shuffle, randint
 import yt_dlp
 import vlc
@@ -77,6 +78,13 @@ def shuffle_playlist():
     shuffle(playlist)
     Current = -1
 
+def get_time_info():
+    try:
+        current = player.get_time() // 1000  # milisegundos a segundos
+        total = player.get_length() // 1000  # milisegundos a segundos
+        return current, total
+    except:
+        return 0, 0
 
 def get_audio_url(video_url) -> str:
     ydl_opts = {
@@ -196,6 +204,35 @@ def preload_song():
     eliminar_archivos()
 
 
+def preload_task():
+    global Current, playlist
+    i = 0
+    prev = Current
+
+    while True:
+        # Si ya todos tienen 'vlcurl' lleno, salimos del bucle
+        if all(song.get('vlcurl') for song in playlist):
+            break
+
+        i += 1
+
+        # Si el usuario cambió mucho el current, reiniciamos i
+        if abs(Current - prev) > 10:
+            i = 1
+
+        val = (Current + i) % len(playlist)
+        prev = Current
+
+        # Si ya tiene vlcurl, lo saltamos
+        if playlist[val].get('vlcurl'):
+            continue
+
+        # Si no lo tiene, lo generamos
+        url = playlist[val]['url']
+        playlist[val]['vlcurl'] = get_audio_url(url)
+        eliminar_archivos()
+
+
 # Variable auxiliar para almacenar temporalmente la última canción válida
 last_known_info = ("No song playing", "", -1, None, None)
 
@@ -226,10 +263,10 @@ def play_index_song(index):
     paused = True
     if index > len(playlist):
         return
-    old = Current
     Current = index - 1
     data = {"id": 0}
     requests.post(url="http://127.0.0.1:5000/next", json=data)
+
     return 0
 
 
@@ -264,6 +301,7 @@ def mains():
     global Current, playlist, paused, instance, player
     instance = vlc.Instance()
     player = instance.media_player_new()
+    threading.Thread(target=preload_task).start()
     data = {"id": 1}
     requests.post(url="http://127.0.0.1:5000/next", json=data)
     while True:

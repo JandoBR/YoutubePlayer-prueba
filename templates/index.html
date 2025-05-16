@@ -2,9 +2,9 @@
 <html lang="es">
 
 <head>
-    <meta charset="UTF-8">
+    <meta charset="UTF-8" />
     <title>🎵 Control de Música</title>
-    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style.css" />
     <script defer src="/static/script.js"></script>
 </head>
 
@@ -13,7 +13,17 @@
 
     <div id="song-info">
         <p><strong>Canción actual:</strong> <span id="song-title">N/A</span></p>
-        <img id="thumbnail" src="" alt="Miniatura" width="150">
+        <img id="thumbnail" src="" alt="Miniatura" width="250">
+        <input type="range" id="progress-bar" min="0" max="100" value="0" step="1"
+            style="width: 95%; max-width: 600px; margin-top: 10px; display: block; margin-left: auto; margin-right: auto;">
+
+        <div>
+            <div id="time-container">
+                <span id="current-time">0:00</span> / <span id="total-time">0:00</span>
+            </div>
+            <div id="loading-duration" style="display: none; color: gray;">Cargando duración...</div>
+
+        </div>
     </div>
 
     <div class="controls">
@@ -21,45 +31,194 @@
         <button onclick="pause()">⏸️ Pausar</button>
         <button onclick="previousSong()">⏮️ Anterior</button>
         <button onclick="nextSong()">⏭️ Siguiente</button>
-        <button onclick="changeVolume()">🔊 Cambiar volumen</button>
-        <button onclick="changeTime()">⏳ Cambiar tiempo</button>
+
         <button onclick="shuffle()">🔀 Shuffle</button>
-        <button onclick="playByIndex()">🎲 Reproducir por índice</button>
         <button onclick="shutdown()">🛑 Apagar servidor</button>
     </div>
 
-    <div id="playlist-container">
-        <ul id="playlist">
-            <!-- Aquí van las canciones -->
-            <li onclick="playIndex(0)">🎵 Canción 1</li>
-            <li onclick="playIndex(1)">🎵 Canción 2</li>
-            <li onclick="playIndex(2)">🎵 Canción 3</li>
-            <!-- etc -->
-        </ul>
+    <div class="volumen">
+        <label for="volume-slider" style="margin-left: 10px;">Volumen:</label>
+        <input type="range" id="volume-slider" min="0" max="100" value="100" step="1" style="vertical-align: middle; padding-bottom: 5%;" />
     </div>
 
-
+    <div id="playlist-container">
+        <ul id="playlist"></ul>
+    </div>
 
     <p id="status"></p>
+
     <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
     <script>
         const socket = io();
 
+        let playing = true; // Estado actual de reproducción
+        let userSeeking = false; // Para detectar si usuario está moviendo la barra
+
+        const progressBar = document.getElementById('progress-bar');
+        const currentTimeSpan = document.getElementById('current-time');
+        const totalTimeSpan = document.getElementById('total-time');
+
+        const volumeSlider = document.getElementById('volume-slider');
+
+        let current = 0; // Tiempo actual en segundos
+        let total = 0;   // Duración total en segundos
+        let lastUpdate = Date.now(); // Última vez que recibimos actualización del servidor
+
+        // Función para formatear segundos en mm:ss
+        function formatTime(seconds) {
+            const m = Math.floor(seconds / 60);
+            const s = seconds % 60;
+            return m + ":" + (s < 10 ? "0" : "") + s;
+        }
+
+        // Recibimos info de canción nueva
         socket.on('song_changed', data => {
-            console.log("Canción actualizada:", data);
             document.getElementById("song-title").textContent = data.title || "N/A";
             document.getElementById("thumbnail").src = data.thumbnail || "";
-        });
-    </script>
 
-    <script>
+            current = 0;
+            total = 0;
+            lastUpdate = Date.now();
+
+            progressBar.value = 0;
+            progressBar.max = 0;
+
+            currentTimeSpan.textContent = "0:00";
+            totalTimeSpan.textContent = "0:00";
+
+            document.getElementById("time-container").style.display = "none";
+            document.getElementById("loading-duration").style.display = "block";
+
+            loadPlaylist();
+        });
+
+
+        socket.on('time_update', data => {
+            if (data.total <= 0 || data.current < 0) return;
+            if (!playing) return;
+            if (userSeeking) return;
+
+            current = data.current || 0;
+            total = data.total || 0;
+            lastUpdate = Date.now();
+
+            updateTimeDisplay();
+        });
+
+        function updateTimeDisplay() {
+            const timeContainer = document.getElementById("time-container");
+            const loadingMsg = document.getElementById("loading-duration");
+
+            if (total <= 0) {
+                timeContainer.style.display = "none";
+                loadingMsg.style.display = "block";
+                return;
+            } else {
+                timeContainer.style.display = "block";
+                loadingMsg.style.display = "none";
+            }
+
+            const elapsed = Math.floor((Date.now() - lastUpdate) / 1000);
+            const shownCurrent = playing ? current + elapsed : current;
+
+            const clampedCurrent = Math.min(shownCurrent, total);
+
+            currentTimeSpan.textContent = formatTime(clampedCurrent);
+            totalTimeSpan.textContent = formatTime(total);
+
+            progressBar.max = total;
+            progressBar.value = clampedCurrent;
+
+        }
+
+
+        setInterval(() => {
+            if (!playing) {
+                currentTimeSpan.textContent = formatTime(current);
+                progressBar.value = current;
+                return;
+            }
+            if (!userSeeking) updateTimeDisplay();
+        }, 1000);
+
+        function pause() {
+            playing = false;
+            fetch('/pause', { method: 'POST' })
+                .then(() => console.log("Pausado"))
+                .catch(err => console.error(err));
+        }
+
+        function resume() {
+            playing = true;
+            fetch('/resume', { method: 'POST' })
+                .then(() => console.log("Reanudado"))
+                .catch(err => console.error(err));
+        }
+
+        progressBar.addEventListener('mousedown', () => {
+            userSeeking = true;
+        });
+        progressBar.addEventListener('touchstart', () => {
+            userSeeking = true;
+        });
+
+        function sendSeek() {
+            const newTime = parseInt(progressBar.value);
+            current = newTime;
+            lastUpdate = Date.now();
+
+            fetch('/set_time', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ time: newTime })
+            });
+
+            userSeeking = false;
+            updateTimeDisplay();
+        }
+
+        progressBar.addEventListener('mouseup', sendSeek);
+        progressBar.addEventListener('touchend', sendSeek);
+
+
+        async function previousSong() {
+            await fetch('/previous_song', { method: 'POST' });
+        }
+
+        async function nextSong() {
+            await fetch('/next_song', { method: 'POST' });
+        }
+
+        // Ya no hay función changeVolume, en cambio:
+        volumeSlider.addEventListener('input', () => {
+            setVolume(volumeSlider.value);
+        });
+
+        async function setVolume(value) {
+            await fetch('/set_volume', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ level: parseInt(value) })
+            });
+        }
+
+        async function shuffle() {
+            await fetch('/shuffle', { method: 'POST' });
+            loadPlaylist();
+        }
+
+
+        async function shutdown() {
+            await fetch('/shutdown', { method: 'POST' });
+        }
+
         async function loadPlaylist() {
             const res = await fetch('/playlist');
             const data = await res.json();
             const playlist = data.playlist;
-            const current = data.current;
+            const currentIndex = data.current;
 
-            const container = document.getElementById('playlist-container');
+            const container = document.getElementById('playlist');
             container.innerHTML = '';
 
             playlist.forEach((song, index) => {
@@ -69,7 +228,7 @@
                 li.style.padding = '5px';
                 li.style.borderBottom = '1px solid #ccc';
 
-                if (index === current) {
+                if (index === currentIndex) {
                     li.style.fontWeight = 'bold';
                     li.style.color = '#007BFF';
                 }
@@ -77,9 +236,7 @@
                 li.addEventListener('click', async () => {
                     await fetch('/play_index_song', {
                         method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ index: index })
                     });
                 });
@@ -88,11 +245,8 @@
             });
         }
 
-        // Llama esta función al cargar la página y luego cada cierto tiempo para refrescar
         loadPlaylist();
-        setInterval(loadPlaylist, 1000); // actualiza cada 3 segundos (puedes ajustar)
     </script>
-
 </body>
 
 </html>

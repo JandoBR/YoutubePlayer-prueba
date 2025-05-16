@@ -1,17 +1,40 @@
-from flask import Flask, jsonify, request, render_template
-from flask_socketio import SocketIO, emit
-import os
-import signal
-import threading
-from player import playlist, shuffle_playlist, pause_song, resume_song, next_song, menu_cli
-from player import previous_song, mains, update_yt_dlp, retrieve_playlist, get_current_song, preload_song
+import eventlet
+eventlet.monkey_patch()
 from player import play_index_song, play_random, set_time_song, set_volume, get_playlist, rearrange_playlist
+from player import previous_song, mains, update_yt_dlp, retrieve_playlist, get_current_song, preload_song
+from player import playlist, shuffle_playlist, pause_song, resume_song, next_song, menu_cli, get_time_info
+import threading
+import signal
+import os
+import sys
+from flask_socketio import SocketIO
+from flask import Flask, jsonify, request, render_template
 
-app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+
+
+if hasattr(sys, '_MEIPASS'):
+    base_path = sys._MEIPASS
+else:
+    base_path = os.path.abspath(".")
+
+
+app = Flask(
+    __name__,
+    static_folder=os.path.join(base_path, 'static'),
+    template_folder=os.path.join(base_path, 'templates')
+)
+
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="eventlet")
 
 preload_lock = threading.Lock()  # Lock to prevent multiple executions
 preload_thread = None
+
+
+def emit_time_info():
+    while True:
+        eventlet.sleep(5)
+        current, total = get_time_info()
+        socketio.emit("time_update", {"current": current, "total": total})
 
 
 @app.route('/')
@@ -29,21 +52,6 @@ def shutdown():
 def preload_task():
     with preload_lock:  # Ensure only one preload runs at a time
         preload_song()
-
-
-@app.route('/preloads', methods=['GET'])
-def pre_load():
-    global preload_thread
-    # If preload is already running, wait for it to finish
-    if preload_thread and preload_thread.is_alive():
-        preload_thread.join()  # Wait until the previous preload completes
-
-    preload_thread = threading.Thread(target=preload_task)
-    preload_thread.start()
-
-    return jsonify({"status": "Loading"})
-
-# TODO REQUEST FROM FRONT END EVERY SECOND
 
 
 @app.route('/rearrange_playlist', methods=['POST'])
@@ -72,11 +80,14 @@ def change_volume():
     return jsonify({"status": "Volume set"})
 
 
-@app.route('/set_time_song', methods=['POST'])
+@app.route("/set_time", methods=["POST"])
 def set_time():
-    data = request.json
-    set_time_song(data['time']*1000)
-    return jsonify({"status": "Time set"})
+    data = request.get_json()
+    seconds = data.get("time")
+    if seconds is not None:
+        set_time_song(seconds * 1000)  # convertir a milisegundos
+        return jsonify({"status": "ok"})
+    return jsonify({"error": "missing time"}), 400
 
 
 @app.route('/play_index_song', methods=['POST'])
@@ -89,9 +100,6 @@ def play_index():
     # Now that previous preload is finished (or didn't exist), change the track
     data = request.json
     play_index_song(data['index'])
-
-    preload_thread = threading.Thread(target=preload_task)
-    preload_thread.start()
 
     info = get_current_song()
     socketio.emit('song_changed', {
@@ -189,4 +197,5 @@ if __name__ == "__main__":
     retrieve_playlist()
     shuffle_playlist()
     menu_cli()
+    socketio.start_background_task(emit_time_info)
     socketio.run(app, host="0.0.0.0", port=5000)

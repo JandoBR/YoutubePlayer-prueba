@@ -39,11 +39,6 @@ async function changeTime() {
     }
 }
 
-async function shuffle() {
-    await fetch("/shuffle", { method: "POST" });
-    setStatus("🔀 Playlist mezclada");
-}
-
 async function playByIndex() {
     const index = prompt("Índice de la canción:");
     if (index !== null) {
@@ -56,17 +51,24 @@ async function playByIndex() {
     }
 }
 
-async function pause() {
-    const res = await fetch("/pause", { method: "POST" });
-    const data = await res.json();
-    setStatus(data.status || data.error);
+function pause() {
+    playing = false;
+    current += Math.floor((Date.now() - lastUpdate) / 1000);  // Congela el tiempo
+    lastUpdate = Date.now(); // Para evitar que el elapsed siga corriendo
+    fetch('/pause', { method: 'POST' })
+        .then(() => console.log("Pausado"))
+        .catch(err => console.error(err));
 }
 
-async function resume() {
-    const res = await fetch("/resume", { method: "POST" });
-    const data = await res.json();
-    setStatus(data.status || data.error);
+
+function resume() {
+    playing = true;
+    lastUpdate = Date.now(); // Reinicia el conteo desde el momento en que reanudas
+    fetch('/resume', { method: 'POST' })
+        .then(() => console.log("Reanudado"))
+        .catch(err => console.error(err));
 }
+
 
 async function nextSong() {
     const res = await fetch("/next", {
@@ -87,7 +89,7 @@ async function previousSong() {
 
 async function shutdown() {
     // Mostrar mensaje de "Servidor apagado"
-    document.body.innerHTML = "<h1>🛑 Servidor apagado</h1><p>La página se cerrará pronto...</p>";
+    document.body.innerHTML = "<h1>🛑 Servidor apagado</h1><p>Cierre la página :D</p>";
 
     // Esperar medio segundo
     await new Promise(resolve => setTimeout(resolve, 500));
